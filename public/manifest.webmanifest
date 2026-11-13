@@ -1,0 +1,11 @@
+{
+  "name": "Floro AI",
+  "short_name": "Floro",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F8FB",
+  "theme_color": "#042260",
+  "icons": [
+    { "src": "/Floro.png", "sizes": "any", "type": "image/png", "purpose": "any" }
+  ]
+}
