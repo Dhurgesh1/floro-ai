@@ -1,9 +1,8 @@
 import { Icon } from '../components/icons.js';
 import { MODEL_CATALOG } from './catalog.js';
+import { getProfileStorageKey } from '../profile.js';
 
 const ENDPOINT_KEY = 'floro:ollama-endpoint';
-const LABELS_KEY = 'floro:model-labels';
-const DEFAULT_MODEL_KEY = 'floro:default-model';
 const DEFAULT_ENDPOINT = 'http://localhost:11434';
 const CATEGORIES = ['All models', 'General AI', 'Coding', 'Reasoning', 'Mathematics', 'Vision', 'Lightweight models', 'Advanced models'];
 
@@ -12,7 +11,7 @@ function getEndpoint() {
 }
 
 function isDefaultModel(name) {
-  try { return JSON.parse(localStorage.getItem(DEFAULT_MODEL_KEY) || 'null')?.model === name; } catch { return false; }
+  try { return JSON.parse(localStorage.getItem(getProfileStorageKey('default-model')) || 'null')?.model === name; } catch { return false; }
 }
 
 function setEndpoint(value) {
@@ -111,7 +110,7 @@ export function createModelManagerPage(view = 'store') {
   }
 
   function labelMap() {
-    try { return JSON.parse(localStorage.getItem(LABELS_KEY) || '{}'); } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(getProfileStorageKey('model-labels')) || '{}'); } catch { return {}; }
   }
 
   function progressMarkup(name) {
@@ -273,9 +272,7 @@ export function createModelManagerPage(view = 'store') {
           if (next === null || !next.trim()) return;
           const labels = labelMap();
           labels[model.name] = next.trim();
-          localStorage.setItem(LABELS_KEY, JSON.stringify(labels));
-              localStorage.setItem('floro:preferences-updated-at', new Date().toISOString());
-              window.dispatchEvent(new CustomEvent('floro-data-changed'));
+          localStorage.setItem(getProfileStorageKey('model-labels'), JSON.stringify(labels));
           renderCards();
           window.dispatchEvent(new CustomEvent('floro-models-changed'));
         });
@@ -284,9 +281,7 @@ export function createModelManagerPage(view = 'store') {
         makeDefault.className = 'action-chip';
         makeDefault.textContent = isDefaultModel(model.name) ? 'Default model' : 'Set default';
         makeDefault.addEventListener('click', () => {
-          localStorage.setItem(DEFAULT_MODEL_KEY, JSON.stringify({ provider: 'ollama', model: model.name }));
-          localStorage.setItem('floro:preferences-updated-at', new Date().toISOString());
-          window.dispatchEvent(new CustomEvent('floro-data-changed'));
+          localStorage.setItem(getProfileStorageKey('default-model'), JSON.stringify({ provider: 'ollama', model: model.name }));
           window.dispatchEvent(new CustomEvent('floro-models-changed'));
           renderCards();
         });
@@ -464,9 +459,9 @@ export function createModelManagerPage(view = 'store') {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || `Could not remove model (${response.status}).`);
-      if (localStorage.getItem(DEFAULT_MODEL_KEY)) {
-        const savedDefault = JSON.parse(localStorage.getItem(DEFAULT_MODEL_KEY));
-        if (savedDefault.model === name) localStorage.removeItem(DEFAULT_MODEL_KEY);
+      if (localStorage.getItem(getProfileStorageKey('default-model'))) {
+        const savedDefault = JSON.parse(localStorage.getItem(getProfileStorageKey('default-model')));
+        if (savedDefault.model === name) localStorage.removeItem(getProfileStorageKey('default-model'));
       }
       await load();
       window.dispatchEvent(new CustomEvent('floro-models-changed'));
@@ -479,8 +474,6 @@ export function createModelManagerPage(view = 'store') {
     event.preventDefault();
     try {
       endpointInput.value = setEndpoint(endpointInput.value);
-      localStorage.setItem('floro:preferences-updated-at', new Date().toISOString());
-      window.dispatchEvent(new CustomEvent('floro-data-changed'));
       window.dispatchEvent(new CustomEvent('floro-models-changed'));
       load();
     } catch (error) {

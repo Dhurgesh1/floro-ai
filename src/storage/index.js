@@ -1,22 +1,7 @@
+import { getActiveProfileId, getProfileStorageKey } from '../profile.js';
+
 const DB_NAME = 'floro-ai-db';
 const STORE_NAME = 'conversations';
-
-function announceChange() {
-  window.dispatchEvent(new CustomEvent('floro-data-changed'));
-}
-
-function addTombstone(key, id) {
-  try {
-    const ids = JSON.parse(localStorage.getItem(key) || '[]');
-    const validIds = Array.isArray(ids) ? ids : [];
-    if (!validIds.includes(id)) validIds.push(id);
-    localStorage.setItem(key, JSON.stringify(validIds));
-  } catch (error) {
-    window.dispatchEvent(new CustomEvent('floro-notice', {
-      detail: { message: `Local delete could not be queued for cloud sync: ${error.message}`, type: 'error' },
-    }));
-  }
-}
 
 class StorageManager {
   constructor() {
@@ -25,12 +10,16 @@ class StorageManager {
 
   init() {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, 1);
-      request.onupgradeneeded = () => {
+      const request = indexedDB.open(DB_NAME, 2);
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
           store.createIndex('updatedAt', 'updatedAt', { unique: false });
+          store.createIndex('profileId', 'profileId', { unique: false });
+        } else {
+          const store = event.target.transaction.objectStore(STORE_NAME);
+          if (!store.indexNames.contains('profileId')) store.createIndex('profileId', 'profileId', { unique: false });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -50,7 +39,7 @@ class StorageManager {
     });
   }
 
-  async getConversations() {
+  async getAllConversations() {
     const db = await this.dbPromise;
     return new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
@@ -59,24 +48,53 @@ class StorageManager {
     });
   }
 
+  async getConversations(profileId = getActiveProfileId()) {
+    if (!profileId) return [];
+    const conversations = await this.getAllConversations();
+    return conversations.filter((conversation) => conversation.profileId === profileId);
+  }
+
+  async assignUnownedConversations(profileId) {
+    if (!profileId) throw new Error('Select a local profile before migrating chats.');
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      let assigned = 0;
+      request.onsuccess = () => {
+        request.result.filter((conversation) => !conversation.profileId).forEach((conversation) => {
+          store.put({ ...conversation, profileId });
+          assigned += 1;
+        });
+      };
+      transaction.oncomplete = () => resolve(assigned);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+      request.onerror = () => transaction.abort();
+    });
+  }
+
   async createConversation(title = 'New conversation') {
-    let defaultModel = { provider: 'automatic', model: 'gpt-4o-mini' };
+    const profileId = getActiveProfileId();
+    if (!profileId) throw new Error('Select a local profile before creating a conversation.');
+    let defaultModel = { provider: 'ollama', model: 'gemma3:1b' };
     try {
-      defaultModel = JSON.parse(localStorage.getItem('floro:default-model') || 'null') || defaultModel;
+      defaultModel = JSON.parse(localStorage.getItem(getProfileStorageKey('default-model', profileId)) || 'null') || defaultModel;
     } catch {}
     const conversation = {
       id: crypto.randomUUID(),
+      profileId,
       title,
       messages: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       pinned: false,
-      provider: defaultModel.provider || 'automatic',
-      model: defaultModel.model || 'gpt-4o-mini',
+      provider: defaultModel.provider || 'ollama',
+      model: defaultModel.model || 'gemma3:1b',
     };
 
     await this.withStore('readwrite', (store) => store.put(conversation));
-    announceChange();
     return conversation;
   }
 
@@ -86,7 +104,6 @@ class StorageManager {
     if (!existing) return null;
     const next = { ...existing, ...updates, updatedAt: new Date().toISOString() };
     await this.withStore('readwrite', (store) => store.put(next));
-    announceChange();
     return next;
   }
 
@@ -99,42 +116,36 @@ class StorageManager {
   }
 
   async deleteConversation(id) {
-    addTombstone('floro:deleted-conversations', id);
+    const conversations = await this.getConversations();
+    if (!conversations.some((conversation) => conversation.id === id)) return false;
     const db = await this.dbPromise;
     return new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(id);
       request.onsuccess = () => {
-        announceChange();
         resolve(true);
       };
       request.onerror = () => reject(request.error);
     });
   }
 
-  async importConversation(conversation) {
-    const existing = (await this.getConversations()).some((item) => item.id === conversation.id);
-    if (existing) return false;
-    await this.withStore('readwrite', (store) => store.put(conversation));
-    announceChange();
-    return true;
-  }
-
-  async replaceConversation(conversation) {
-    await this.withStore('readwrite', (store) => store.put(conversation));
-    announceChange();
-  }
-
-  async mergeRemoteConversations(conversations) {
-    const local = await this.getConversations();
-    const localIds = new Set(local.map((conversation) => conversation.id));
-    const missing = conversations.filter((conversation) => !localIds.has(conversation.id));
-    if (missing.length) {
-      await this.withStore('readwrite', (store) => {
-        missing.forEach((conversation) => store.put(conversation));
-      });
-      announceChange();
-    }
-    return missing.length;
+  async deleteAllConversationsForProfile(profileId) {
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      let deleted = 0;
+      request.onsuccess = () => {
+        request.result.filter((conversation) => conversation.profileId === profileId).forEach((conversation) => {
+          store.delete(conversation.id);
+          deleted += 1;
+        });
+      };
+      transaction.oncomplete = () => resolve(deleted);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+      request.onerror = () => transaction.abort();
+    });
   }
 }
 

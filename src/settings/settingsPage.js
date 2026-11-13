@@ -1,7 +1,5 @@
-import { getSupabaseSetupMessage, supabaseConfigured } from '../supabase.js';
-
-const ENDPOINT_KEY = 'floro:ollama-endpoint';
-const DEFAULT_ENDPOINT = 'http://localhost:11434';
+import { createPurposeField, getLocalProfile, updateLocalProfile } from '../profile.js';
+import { Icon } from '../components/icons.js';
 
 function button(text, className = 'action-chip') {
   const element = document.createElement('button');
@@ -11,74 +9,121 @@ function button(text, className = 'action-chip') {
   return element;
 }
 
-export function createSettingsPage({ onNavigate = () => {} } = {}) {
+function createField(labelText, input) {
+  const label = document.createElement('label');
+  label.className = 'local-gate-field settings-field';
+  label.textContent = labelText;
+  label.appendChild(input);
+  return label;
+}
+
+export function createSettingsPage({
+  onLogout = () => {},
+  onDelete = () => {},
+  onChangePin = () => {},
+  onProfileUpdated = () => {},
+} = {}) {
   const page = document.createElement('section');
   page.className = 'manager-page settings-page';
-  page.innerHTML = '<div class="page-heading"><div><p class="eyebrow">PREFERENCES</p><h2>Settings</h2><p>Manage model connectivity, privacy, and account sync.</p></div></div>';
+  page.innerHTML = '<div class="page-heading"><div><p class="eyebrow">YOUR ACCOUNT</p><h2>Profile settings</h2><p>Update your details or manage access to this local profile.</p></div></div>';
 
-  const modelSection = document.createElement('article');
-  modelSection.className = 'settings-card';
-  modelSection.innerHTML = '<h3>Ollama connection</h3><p>Downloads and local model requests are sent to this server. On mobile, use a reachable remote Ollama server. Model files are stored in Ollama’s configured model directory; Floro cannot safely change that path through Ollama’s API.</p>';
-  const endpointForm = document.createElement('form');
-  endpointForm.className = 'endpoint-bar';
-  endpointForm.innerHTML = '<label>Ollama server URL<input name="endpoint" type="url" autocomplete="url" spellcheck="false"></label>';
-  const endpointInput = endpointForm.querySelector('input');
-  endpointInput.value = localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
-  const saveEndpoint = button('Save server', 'primary-button');
-  saveEndpoint.type = 'submit';
-  endpointForm.appendChild(saveEndpoint);
-  const endpointMessage = document.createElement('div');
-  endpointMessage.className = 'settings-hint';
-  endpointForm.addEventListener('submit', (event) => {
+  let profile = getLocalProfile();
+  const profileSection = document.createElement('article');
+  profileSection.className = 'settings-card profile-settings-card';
+  profileSection.innerHTML = '<h3>Your details</h3><p>Your profile is stored only on this device. Your date of birth is not used to verify identity.</p>';
+
+  const profileSummary = document.createElement('div');
+  profileSummary.className = 'settings-profile-summary';
+  const profileAvatar = document.createElement('span');
+  profileAvatar.className = 'settings-profile-avatar';
+  profileAvatar.setAttribute('aria-hidden', 'true');
+  profileAvatar.appendChild(Icon({ name: 'user', size: 20 }));
+  const profileDetails = document.createElement('span');
+  profileDetails.className = 'settings-profile-details';
+  const profileName = document.createElement('strong');
+  const profileMeta = document.createElement('small');
+  profileDetails.append(profileName, profileMeta);
+  profileSummary.append(profileAvatar, profileDetails);
+
+  const detailsForm = document.createElement('form');
+  detailsForm.className = 'profile-details-form';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.name = 'name';
+  nameInput.autocomplete = 'given-name';
+  nameInput.maxLength = 60;
+  nameInput.required = true;
+  const nameLabel = createField('Name', nameInput);
+  const dobInput = document.createElement('input');
+  dobInput.type = 'date';
+  dobInput.name = 'dateOfBirth';
+  dobInput.required = true;
+  const now = new Date();
+  dobInput.max = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const dobLabel = createField('Date of birth', dobInput);
+  const purposeField = createPurposeField(profile?.purpose || '');
+  const message = document.createElement('p');
+  message.className = 'settings-hint';
+  message.setAttribute('role', 'status');
+  const save = button('Save details', 'primary-button');
+  save.type = 'submit';
+  detailsForm.append(nameLabel, dobLabel, purposeField.element, message, save);
+
+  function displayProfile(nextProfile) {
+    profile = nextProfile;
+    nameInput.value = profile?.name || '';
+    dobInput.value = profile?.dateOfBirth || '';
+    profileName.textContent = profile?.name || 'Local profile';
+    profileMeta.textContent = profile?.purpose || 'Personal workspace on this device';
+  }
+
+  displayProfile(profile);
+  detailsForm.addEventListener('submit', (event) => {
     event.preventDefault();
+    message.textContent = '';
     try {
-      const url = new URL(endpointInput.value);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Use an HTTP or HTTPS URL without embedded credentials, query strings, or fragments.');
-      localStorage.setItem(ENDPOINT_KEY, url.toString().replace(/\/$/, ''));
-      localStorage.setItem('floro:preferences-updated-at', new Date().toISOString());
-      window.dispatchEvent(new CustomEvent('floro-data-changed'));
-      endpointMessage.textContent = 'Ollama URL saved on this device.';
-      endpointMessage.className = 'settings-hint success';
-      window.dispatchEvent(new CustomEvent('floro-models-changed'));
+      if (!nameInput.reportValidity() || !dobInput.reportValidity() || !purposeField.validate()) return;
+      const updated = updateLocalProfile(profile.id, {
+        name: nameInput.value,
+        dateOfBirth: dobInput.value,
+        purpose: purposeField.getValue(),
+      });
+      displayProfile(updated);
+      onProfileUpdated(updated);
+      message.textContent = 'Your details have been saved on this device.';
+      message.className = 'settings-hint success';
     } catch (error) {
-      endpointMessage.textContent = error.message || 'Invalid server URL.';
-      endpointMessage.className = 'settings-hint error';
+      message.textContent = error.message || 'Could not save your profile details.';
+      message.className = 'settings-hint error';
     }
   });
-  modelSection.append(endpointForm, endpointMessage);
+  profileSection.append(profileSummary, detailsForm);
 
-  const accountSection = document.createElement('article');
-  accountSection.className = 'settings-card';
-  accountSection.innerHTML = `<h3>Supabase account and sync</h3><p>${supabaseConfigured ? 'Supabase is configured. Sign in to manage your profile and sync.' : getSupabaseSetupMessage()}</p>`;
-  const accountButton = button('Open account settings', 'primary-button');
-  accountButton.addEventListener('click', () => onNavigate('account'));
-  accountSection.appendChild(accountButton);
+  const accessSection = document.createElement('article');
+  accessSection.className = 'settings-card';
+  accessSection.innerHTML = '<h3>Access and security</h3><p>The local PIN is a basic interface lock. It does not encrypt your data.</p>';
+  const accessActions = document.createElement('div');
+  accessActions.className = 'settings-account-actions';
+  const changePin = button('Change PIN', 'action-chip settings-action-button');
+  changePin.prepend(Icon({ name: 'lock', size: 18 }));
+  changePin.addEventListener('click', () => onChangePin(profile));
+  const logout = button('Log out', 'action-chip settings-action-button');
+  logout.prepend(Icon({ name: 'logout', size: 18 }));
+  logout.addEventListener('click', onLogout);
+  accessActions.append(changePin, logout);
+  accessSection.appendChild(accessActions);
 
-  const privacySection = document.createElement('article');
-  privacySection.className = 'settings-card';
-  privacySection.innerHTML = '<h3>Data and privacy</h3><p>Chat history is stored locally in IndexedDB. Cloud sync is opt-in and requires a Supabase account. AI requests go to the selected provider. When live search is configured, current-information questions send only the latest user message to Brave Search; search excerpts and source links are then shared with the selected AI provider as context.</p>';
-
-  const instructionsSection = document.createElement('article');
-  instructionsSection.className = 'settings-card';
-  instructionsSection.innerHTML = '<h3>Custom instructions</h3><p>These instructions are sent with chat requests and are included in cloud preference sync after you opt in.</p>';
-  const instructions = document.createElement('textarea');
-  instructions.className = 'settings-instructions';
-  instructions.rows = 4;
-  instructions.maxLength = 20000;
-  instructions.placeholder = 'Describe how Floro AI should respond…';
-  instructions.value = localStorage.getItem('floro:custom-instructions') || '';
-  const saveInstructions = button('Save instructions', 'primary-button');
-  const instructionsMessage = document.createElement('div');
-  instructionsMessage.className = 'settings-hint';
-  saveInstructions.addEventListener('click', () => {
-    localStorage.setItem('floro:custom-instructions', instructions.value.trim());
-    localStorage.setItem('floro:preferences-updated-at', new Date().toISOString());
-    window.dispatchEvent(new CustomEvent('floro-data-changed'));
-    instructionsMessage.textContent = 'Custom instructions saved on this device.';
-    instructionsMessage.className = 'settings-hint success';
+  const deleteSection = document.createElement('article');
+  deleteSection.className = 'settings-card settings-danger-card';
+  deleteSection.innerHTML = '<h3>Delete this profile</h3><p>Permanently delete this profile and its local chats and preferences from this device. This cannot be undone.</p>';
+  const deleteButton = button('Delete profile and its data', 'danger-button');
+  deleteButton.addEventListener('click', () => {
+    if (confirm(`Delete ${profile.name} and permanently remove their local chats and preferences? This cannot be undone.`)) {
+      onDelete(profile);
+    }
   });
-  instructionsSection.append(instructions, saveInstructions, instructionsMessage);
+  deleteSection.appendChild(deleteButton);
 
-  page.append(modelSection, accountSection, instructionsSection, privacySection);
+  page.append(profileSection, accessSection, deleteSection);
   return page;
 }

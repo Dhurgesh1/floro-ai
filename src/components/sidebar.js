@@ -1,11 +1,17 @@
 import { storage } from '../storage/index.js';
 import { Icon } from './icons.js';
 
-export function createSidebar() {
+export function createSidebar({ profile } = {}) {
   const root = document.createElement('aside');
   root.className = 'sidebar';
 
   const state = { open: true, conversations: [], selectedId: null };
+  root.classList.add('open');
+
+  const updateLogo = () => {
+    const logo = root.querySelector('.brand-mark');
+    if (logo) logo.src = state.open ? '/Floro-main.png' : '/Floro.png';
+  };
 
   const renderBrand = () => {
     const brandWrap = document.createElement('div');
@@ -14,22 +20,25 @@ export function createSidebar() {
     const brand = document.createElement('div');
     brand.className = 'brand';
     const logo = document.createElement('img');
-    logo.src = '/Floro.png';
+    logo.src = '/Floro-main.png';
     logo.alt = 'Floro AI';
     logo.className = 'brand-mark';
-    const title = document.createElement('div');
-    title.className = 'brand-name';
-    title.textContent = 'Floro AI';
     brand.appendChild(logo);
-    brand.appendChild(title);
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'icon-button';
     toggle.appendChild(Icon({ name: 'menu', size: 16 }));
     toggle.addEventListener('click', () => {
-      state.open = !state.open;
-      root.classList.toggle('collapsed', !state.open);
+      if (window.matchMedia('(max-width: 900px)').matches) {
+        state.open = !state.open;
+        root.classList.remove('collapsed');
+        root.classList.toggle('open', state.open);
+      } else {
+        state.open = !state.open;
+        root.classList.toggle('collapsed', !state.open);
+      }
+      updateLogo();
     });
 
     brandWrap.appendChild(brand);
@@ -40,12 +49,9 @@ export function createSidebar() {
   const navItems = [
     { id: 'new-chat', label: 'New Chat', icon: 'plus' },
     { id: 'search', label: 'Search Conversations', icon: 'search' },
-    { id: 'library', label: 'Library', icon: 'library' },
     { id: 'model-store', label: 'Model Store', icon: 'spark' },
     { id: 'my-models', label: 'My Models', icon: 'folder' },
-    { id: 'projects', label: 'Projects', icon: 'folder' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
-    { id: 'account', label: 'Account', icon: 'settings' },
   ];
 
   const nav = document.createElement('nav');
@@ -54,6 +60,8 @@ export function createSidebar() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'nav-button';
+    btn.title = item.label;
+    btn.setAttribute('aria-label', item.label);
     btn.innerHTML = `<span>${item.label}</span>`;
     btn.prepend(Icon({ name: item.icon, size: 18 }));
     btn.addEventListener('click', async () => {
@@ -65,6 +73,11 @@ export function createSidebar() {
         });
       } else {
         root.dispatchEvent(new CustomEvent('navigation-requested', { detail: { page: item.id } }));
+      }
+      if (window.matchMedia('(max-width: 900px)').matches) {
+        state.open = false;
+        root.classList.remove('open');
+        updateLogo();
       }
     });
     nav.appendChild(btn);
@@ -81,9 +94,46 @@ export function createSidebar() {
   list.className = 'conversation-list';
   section.appendChild(list);
 
+  const profileSwitcher = document.createElement('button');
+  profileSwitcher.type = 'button';
+  profileSwitcher.className = 'sidebar-profile-switcher';
+  profileSwitcher.setAttribute('aria-label', `Switch user. Current profile: ${profile?.name || 'Unknown'}`);
+  const avatar = document.createElement('span');
+  avatar.className = 'sidebar-profile-avatar';
+  avatar.setAttribute('aria-hidden', 'true');
+  avatar.appendChild(Icon({ name: 'user', size: 19 }));
+  const profileDetails = document.createElement('span');
+  profileDetails.className = 'sidebar-profile-details';
+  const profileName = document.createElement('strong');
+  profileName.textContent = profile?.name || 'Local profile';
+  const profileLabel = document.createElement('small');
+  profileLabel.textContent = 'Switch profile';
+  profileDetails.append(profileName, profileLabel);
+  const profileArrow = document.createElement('span');
+  profileArrow.className = 'sidebar-profile-arrow';
+  profileArrow.setAttribute('aria-hidden', 'true');
+  profileArrow.appendChild(Icon({ name: 'chevron', size: 16 }));
+  profileSwitcher.append(avatar, profileDetails, profileArrow);
+  profileSwitcher.addEventListener('click', () => {
+    root.dispatchEvent(new CustomEvent('profile-switch-requested'));
+  });
+  const logoutButton = document.createElement('button');
+  logoutButton.type = 'button';
+  logoutButton.className = 'sidebar-logout-button';
+  logoutButton.setAttribute('aria-label', 'Log out of the current profile');
+  logoutButton.append(Icon({ name: 'logout', size: 17 }));
+  const logoutLabel = document.createElement('span');
+  logoutLabel.textContent = 'Log out';
+  logoutButton.appendChild(logoutLabel);
+  logoutButton.addEventListener('click', () => {
+    root.dispatchEvent(new CustomEvent('logout-requested'));
+  });
+
   root.appendChild(renderBrand());
   root.appendChild(nav);
   root.appendChild(section);
+  root.appendChild(profileSwitcher);
+  root.appendChild(logoutButton);
 
   function renderList() {
     list.innerHTML = '';
@@ -100,9 +150,14 @@ export function createSidebar() {
       if (state.selectedId === conversation.id) item.classList.add('active');
       const main = document.createElement('div');
       main.className = 'conversation-main';
+      const conversationIcon = document.createElement('span');
+      conversationIcon.className = 'conversation-chat-icon';
+      conversationIcon.setAttribute('aria-hidden', 'true');
+      conversationIcon.appendChild(Icon({ name: 'chat', size: 17 }));
       const title = document.createElement('div');
       title.className = 'conversation-title';
       title.textContent = conversation.title || 'Untitled conversation';
+      item.title = title.textContent;
       const actions = document.createElement('div');
       actions.className = 'item-actions';
       const star = document.createElement('button');
@@ -114,12 +169,16 @@ export function createSidebar() {
       star.addEventListener('click', () => {
         storage.updateConversation(conversation.id, { pinned: !conversation.pinned }).then(() => render());
       });
+      star.setAttribute('aria-label', `Pin ${title.textContent}`);
+      star.title = `Pin ${title.textContent}`;
       const trash = document.createElement('button');
       trash.type = 'button';
       trash.className = 'icon-button';
       trash.style.width = '28px';
       trash.style.height = '28px';
       trash.appendChild(Icon({ name: 'trash', size: 12 }));
+      trash.setAttribute('aria-label', `Delete ${title.textContent}`);
+      trash.title = `Delete ${title.textContent}`;
       item.addEventListener('click', () => {
         state.selectedId = conversation.id;
         renderList();
@@ -138,7 +197,7 @@ export function createSidebar() {
       });
       actions.appendChild(star);
       actions.appendChild(trash);
-      main.appendChild(title);
+      main.append(conversationIcon, title);
       item.appendChild(main);
       item.appendChild(actions);
       list.appendChild(item);
@@ -151,6 +210,27 @@ export function createSidebar() {
   }
 
   root.render = render;
+  root.toggleOpen = () => {
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      state.open = !state.open;
+      root.classList.remove('collapsed');
+      root.classList.toggle('open', state.open);
+      updateLogo();
+      return;
+    }
+    state.open = !state.open;
+    root.classList.toggle('collapsed', !state.open);
+    updateLogo();
+  };
+  root.openConversation = (conversationId) => {
+    state.selectedId = conversationId;
+    renderList();
+    root.dispatchEvent(new CustomEvent('conversation-selected', { detail: { conversationId } }));
+  };
+  root.updateProfile = (nextProfile) => {
+    profileName.textContent = nextProfile?.name || 'Local profile';
+    profileSwitcher.setAttribute('aria-label', `Switch user. Current profile: ${nextProfile?.name || 'Unknown'}`);
+  };
   render();
   return root;
 }

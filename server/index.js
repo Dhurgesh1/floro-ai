@@ -27,6 +27,15 @@ const modelCatalog = [
   { name: 'deepseek-r1:8b', title: 'DeepSeek R1 8B', developer: 'DeepSeek', category: 'Reasoning', source: 'https://ollama.com/library/deepseek-r1' },
   { name: 'llava:7b', title: 'LLaVA 7B', developer: 'LLaVA contributors', category: 'Vision', source: 'https://ollama.com/library/llava' },
 ];
+const supportedChatImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+function isValidChatImage(image) {
+  return image
+    && supportedChatImageTypes.has(image.type)
+    && typeof image.data === 'string'
+    && /^[A-Za-z0-9+/]+={0,2}$/.test(image.data)
+    && Buffer.byteLength(image.data, 'base64') <= 6 * 1024 * 1024;
+}
 
 app.use(cors({
   origin(origin, callback) {
@@ -326,7 +335,16 @@ app.post('/api/chat', async (req, res) => {
     deviceOnline = true,
   } = req.body || {};
   if (!Array.isArray(messages) || messages.length > 100) return res.status(400).json({ error: 'Invalid chat messages.' });
-  if (!messages.every((message) => message && ['user', 'assistant', 'system'].includes(message.role) && typeof message.content === 'string')) {
+  if (!messages.every((message) => (
+    message
+    && ['user', 'assistant', 'system'].includes(message.role)
+    && typeof message.content === 'string'
+    && (message.images === undefined || (
+      Array.isArray(message.images)
+      && message.images.length <= 5
+      && message.images.every(isValidChatImage)
+    ))
+  ))) {
     return res.status(400).json({ error: 'Chat message roles and contents are invalid.' });
   }
   if (!validModelName(model)) return res.status(400).json({ error: 'Invalid model name.' });
@@ -394,7 +412,11 @@ app.post('/api/chat', async (req, res) => {
       }
       const ollamaMessages = [
         ...(effectiveSystemInstruction ? [{ role: 'system', content: effectiveSystemInstruction }] : []),
-        ...messages.map(({ role, content }) => ({ role, content })),
+        ...messages.map(({ role, content, images }) => ({
+          role,
+          content,
+          ...(images?.length ? { images: images.map((image) => image.data) } : {}),
+        })),
       ];
       const response = await fetch(`${endpoint}/api/chat`, {
         method: 'POST',
@@ -440,7 +462,18 @@ app.post('/api/chat', async (req, res) => {
     });
     const inputMessages = [
       ...(effectiveSystemInstruction ? [{ role: 'system', content: effectiveSystemInstruction }] : []),
-      ...messages.map(({ role, content }) => ({ role, content })),
+      ...messages.map(({ role, content, images }) => ({
+        role,
+        content: images?.length
+          ? [
+            { type: 'text', text: content },
+            ...images.map(({ type, data }) => ({
+              type: 'image_url',
+              image_url: { url: `data:${type};base64,${data}`, detail: 'auto' },
+            })),
+          ]
+          : content,
+      })),
     ];
     const stream = await client.chat.completions.create({
       model,

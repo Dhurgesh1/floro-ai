@@ -1,10 +1,9 @@
 import { storage } from '../storage/index.js';
-
-const PROJECTS_KEY = 'floro:projects';
+import { getProfileStorageKey } from '../profile.js';
 
 function readProjects() {
   try {
-    const projects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]');
+    const projects = JSON.parse(localStorage.getItem(getProfileStorageKey('projects')) || '[]');
     return Array.isArray(projects) ? projects : [];
   } catch {
     return [];
@@ -14,7 +13,7 @@ function readProjects() {
 export function createProjectsPage() {
   const page = document.createElement('section');
   page.className = 'manager-page';
-  page.innerHTML = '<div class="page-heading"><div><p class="eyebrow">WORKSPACES</p><h2>Projects</h2><p>Group conversations into projects. Project metadata syncs when cloud sync is enabled.</p></div></div>';
+  page.innerHTML = '<div class="page-heading"><div><p class="eyebrow">WORKSPACES</p><h2>Projects</h2><p>Group conversations into projects. Project data is stored on this device.</p></div></div>';
   const form = document.createElement('form');
   form.className = 'project-create-form';
   form.innerHTML = '<label>Project name<input name="name" maxlength="80" required placeholder="For example, Product research"></label>';
@@ -80,15 +79,10 @@ export function createProjectsPage() {
         remove.addEventListener('click', async () => {
           if (!confirm(`Delete the project “${project.name}”? Its conversations will remain in your history.`)) return;
           const nextProjects = readProjects().filter((entry) => entry.id !== project.id);
-          localStorage.setItem(PROJECTS_KEY, JSON.stringify(nextProjects));
-          let deletedProjects = [];
-          try { deletedProjects = JSON.parse(localStorage.getItem('floro:deleted-projects') || '[]'); } catch {}
-          if (!deletedProjects.includes(project.id)) deletedProjects.push(project.id);
-          localStorage.setItem('floro:deleted-projects', JSON.stringify(deletedProjects));
+          localStorage.setItem(getProfileStorageKey('projects'), JSON.stringify(nextProjects));
           for (const conversation of projectConversations) {
             await storage.updateConversation(conversation.id, { folderId: null });
           }
-          window.dispatchEvent(new CustomEvent('floro-data-changed'));
           render();
         });
         controls.append(selector, assign, remove);
@@ -110,8 +104,7 @@ export function createProjectsPage() {
     const now = new Date().toISOString();
     const projects = readProjects();
     projects.unshift({ id: crypto.randomUUID(), name, createdAt: now, updatedAt: now });
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
-    window.dispatchEvent(new CustomEvent('floro-data-changed'));
+    localStorage.setItem(getProfileStorageKey('projects'), JSON.stringify(projects));
     form.reset();
     render();
   });
